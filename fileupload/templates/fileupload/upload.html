@@ -1,0 +1,280 @@
+{% extends "admin/base_site.html" %}
+
+{% load i18n admin_urls static admin_modify %}
+{% load staticfiles %}
+
+{% block title %}Upload Files{{ block.super }}{% endblock %}
+
+{% block extrahead %}{{ block.super }}
+{% url 'admin:jsi18n' as jsi18nurl %}
+<script src="https://code.jquery.com/jquery-3.2.1.min.js"></script> <!-- Ensure it's not jquery-3.2.1.slim.min.js -->
+<script type="text/javascript" src="{{ jsi18nurl|default:"../../../jsi18n/" }}"></script>
+{{ media }}
+<script src="https://stackpath.bootstrapcdn.com/bootstrap/4.4.1/js/bootstrap.min.js" integrity="sha384-wfSDF2E50Y2D1uUdj0O3uMBJnjuUD4Ih7YwaYd1iqfktj0Uod8GCExl3Og8ifwB6" crossorigin="anonymous"></script>
+<script type="text/javascript" src="{% static "fileupload/Compressor.js" %}"></script>
+{% endblock %}
+
+{% block extrastyle %}{{ block.super }}
+<link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.4.1/css/bootstrap.min.css" integrity="sha384-Vkoo8x4CGsO3+Hhxv8T/Q5PaXtkKtu6ug5TOeNV6gBiFeWPGFN9MuhOf23Q9Ifjh" crossorigin="anonymous">
+<link rel="stylesheet" type="text/css" href="{% static "admin/css/base.css" %}">
+<link rel="stylesheet" type="text/css" href="{% static "admin/css/forms.css" %}">
+<style type="text/css">
+    #header {
+        box-sizing: initial;
+    }
+</style>
+{% endblock %}
+
+{% block coltype %}colM{% endblock %}
+
+{% block bodyclass %}{{ block.super }} app-{{ opts.app_label }} model-{{ opts.model_name }} change-form{% endblock %}
+
+
+{% if not is_popup %}
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+<a href="{% url 'admin:index' %}">{% trans 'Home' %}</a>
+&rsaquo; <a href="{% url 'admin:app_list' app_label=opts.app_label %}">{{ opts.app_config.verbose_name }}</a>
+&rsaquo; <a href="{% url opts|admin_urlname:'changelist' %}">{{ opts.verbose_name_plural }}</a>
+{%if object%}
+&rsaquo; <a href="{% url opts|admin_urlname:'change' object.pk|admin_urlquote %}">{{ object|truncatewords:"18" }}</a>
+{%endif%}
+&rsaquo; {% trans 'Upload Files' %}
+</div>
+{% endblock %}
+{% endif %}
+
+{% block content %}
+<a href="../{%if is_popup %}?pop=1{% endif %}">{% trans 'back' %}</a>
+
+<div class='row'>
+    <div class='col-6 offset-3'>
+        <div class='item-loading-queue'>
+
+        </div>
+        <form id="upload-form" class='upload-form' method="POST">
+            {% csrf_token %}
+            <div class="row my-2">
+            {% for field in form %}
+                <div class="col d-flex flex-column option-field">
+                {{field.label_tag}} {{field}}
+                </div>
+            {% endfor %}    
+            </div>
+            <div class="row my-2">
+                <div class="col d-flex flex-column">
+                    <div class="custom-file">
+                        <input type="file" class="custom-file-input upload-input" id="customFile" accept='*' multiple='multiple'>
+                        <label class="custom-file-label" for="customFile" style="overflow: hidden">Choose Files</label>
+                    </div>
+                </div>
+            </div>
+            <div class="row my-2">
+                <div class="col d-flex flex-column">
+                    <input type="submit" value="Save" class="upload-btn">
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+
+$(document).ready(function(){
+
+    // setup session cookie data. This is Django-related
+    function getCookie(name) {
+        var cookieValue = null;
+        if (document.cookie && document.cookie !== '') {
+            var cookies = document.cookie.split(';');
+            for (var i = 0; i < cookies.length; i++) {
+                var cookie = jQuery.trim(cookies[i]);
+                // Does this cookie string begin with the name we want?
+                if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                    cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                    break;
+                }
+            }
+        }
+        return cookieValue;
+    }
+    var csrftoken = getCookie('csrftoken');
+    function csrfSafeMethod(method) {
+        // these HTTP methods do not require CSRF protection
+        return (/^(GET|HEAD|OPTIONS|TRACE)$/.test(method));
+    }
+    $.ajaxSetup({
+        beforeSend: function(xhr, settings) {
+            if (!csrfSafeMethod(settings.type) && !this.crossDomain) {
+                xhr.setRequestHeader("X-CSRFToken", csrftoken);
+            }
+        }
+    });
+    // end session cookie data setup. 
+
+
+
+// declare an empty array for potential uploaded files
+var fileItemList = []
+
+// auto-upload on file input change.
+$('#upload-form').submit(function(event){
+    event.preventDefault();
+    var selectedFiles = $('.upload-input').prop('files');
+    var optionFields = $('.option-field').children(':input');
+    var optionsData = {};
+    $.each(optionFields, function(index, field){
+        name = field.name;
+        value = field.value;
+        optionsData[name] = value
+    })
+    $.each(selectedFiles, function(index, item){
+      uploadFile(item, optionsData)
+    })
+    $('.upload-input').val('');
+    $('.custom-file-label').text('Choose Files');
+})
+
+$(document).on('change','.upload-input', function(event){
+    var selectedFiles = $('.upload-input').prop('files');
+    var inputstring = ''
+    $.each(selectedFiles, function(index, item){
+        inputstring = inputstring + item.name +', ';
+    })
+    $('.custom-file-label').text(inputstring);
+})
+
+
+function constructFormPolicyData(policyData, fileItem) {
+    var contentType = fileItem.type != '' ? fileItem.type : 'application/octet-stream'
+    var url = policyData.url
+    var filename = policyData.fields.key
+    var fd = new FormData()
+    $.each(policyData.fields, function(key, value) {
+        fd.append(key, value);
+    })
+    fd.append('acl', 'public-read');
+    if('{{attachment}}' == 'True') {
+        fd.append('Content-Disposition', 'attachment');
+    }
+    fd.append('file', fileItem);
+    return fd
+}
+
+
+function displayItems(fileItemList){
+    var itemList = $('.item-loading-queue')
+    itemList.html("")
+    $.each(fileItemList, function(index, obj){
+        var item = obj.file
+        var id_ = obj.id
+        var order_ = obj.order
+        var complete = item.complete ? 'bg-success' : ''
+        var html_ = "<div class=\"progress\" style=\"height:10px\">" + 
+          "<div class=\"progress-bar " + complete + "\" role=\"progressbar\" style='width:" + item.progress + "%' aria-valuenow='" + item.progress + "' aria-valuemin=\"0\" aria-valuemax=\"100\"></div></div>"
+        itemList.append("<div>" + order_ + ") " + item.name + "<br/>" + html_ + "</div><hr/>")
+
+    })
+}
+
+function fileUploadComplete(fileItem){
+    fileItem.complete = true;
+    displayItems(fileItemList);
+}
+
+function _uploadFile(fileItem, policyData){
+    // construct the needed data using the policy for AWS
+    var fd = constructFormPolicyData(policyData, fileItem)
+    
+    // use XML http Request to Send to AWS. 
+    var xhr = new XMLHttpRequest()
+
+    // construct callback for when uploading starts
+    xhr.upload.onloadstart = function(event){
+        var inLoadingIndex = $.inArray(fileItem, fileItemList)
+        if (inLoadingIndex == -1){
+            // Item is not loading, add to inProgress queue
+            newLoadingItem = {
+                file: fileItem,
+                id: policyData.file_id,
+                order: fileItemList.length + 1
+            }
+            fileItemList.push(newLoadingItem)
+          }
+        fileItem.xhr = xhr
+    }
+
+    // Monitor upload progress and attach to fileItem.
+    xhr.upload.addEventListener("progress", function(event){
+        if (event.lengthComputable) {
+         var progress = Math.round(event.loaded / event.total * 100);
+            fileItem.progress = progress
+            displayItems(fileItemList)
+        }
+    })
+
+    xhr.upload.addEventListener("load", function(event){
+        fileUploadComplete(fileItem)
+    })
+
+    xhr.open('POST', policyData.url , true);
+    xhr.send(fd);
+}
+
+function uploadFile(fileItem, optionsData){
+    var policyData;
+    var newLoadingItem;
+    // get AWS upload policy for each file uploaded through the POST method
+    // Remember we're creating an instance in the backend so using POST is
+    // needed.
+    const fd = new FormData(document.getElementById('upload-form'))
+    fd.append('filename', fileItem.name)
+    $.ajax({
+        method:"POST",
+        data: fd,
+        contentType: false,
+        processData: false,
+        url: '{{api_files_policy_url}}',
+        success: function(data){
+            policyData = data
+        },
+        error: function(data){
+            alert("An error occured, please try again later")
+        }
+    }).done(function(){
+        if ('{{ image_compressor }}' != 'False') {
+            var extension = fileItem.name.split('.').pop().toLowerCase();
+            switch(extension) {
+                case 'jpg':
+                case 'png':
+                case 'gif':
+                case 'jpeg':
+                    var valid_image = true;
+                    break;
+                default:
+                    var valid_image = false;
+            }
+            if (valid_image) {
+                var options = {};
+                if ('{{ image_compressor }}' != 'True') {
+                    options = JSON.parse('{{ image_compressor }}'.replace(/&#39;/g, '"'));
+                }
+                new Compressor(fileItem, Object.assign(options, {
+                    success(result){
+                        _uploadFile(result, policyData);
+                    },
+                    error(err) {
+                      console.log(err.message);
+                    },
+                }))
+            } else {
+                _uploadFile(fileItem, policyData);
+            }
+        } else {
+            _uploadFile(fileItem, policyData);
+        }
+    })
+}});
+</script>
+
+{% endblock content %}

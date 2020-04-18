@@ -1,0 +1,14 @@
+{% extends 'admin/change_list.html' %}
+{% load i18n %}
+
+{% block object-tools-items %}
+  {% if fileupload_list and fileupload_list_url %}
+  <li>
+    <a href="{{ fileupload_list_url }}">{% trans 'Upload Files' %}</a>
+  </li>
+  {% endif %}
+{{ block.super }}
+
+{% endblock %}
+
+
